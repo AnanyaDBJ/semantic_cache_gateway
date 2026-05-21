@@ -1,0 +1,38 @@
+command:
+  - "uvicorn"
+  - "app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+  - "--log-level"
+  - "info"
+
+env:
+  - name: SIMILARITY_THRESHOLD
+    value: "0.92"
+  - name: MAX_CONTEXT_TURNS
+    value: "5"
+  - name: DEFAULT_TTL_SECONDS
+    value: "86400"
+  - name: EMBEDDING_MODEL
+    value: "databricks-gte-large-en"
+  - name: DEFAULT_LLM_MODEL
+    value: "databricks-claude-opus-4-6"
+  - name: LOG_LEVEL
+    value: "INFO"
+  - name: DB_POOL_SIZE
+    value: "5"
+  - name: DB_MAX_OVERFLOW
+    value: "10"
+
+resources:
+  - name: serving-endpoint
+    serving_endpoint:
+      name: databricks-gte-large-en
+      permission: CAN_QUERY
+  - name: database
+    postgres:
+      branch: projects/my-semantic-cache/branches/production
+      database: projects/my-semantic-cache/branches/production/databases/databricks-postgres
+      permission: CAN_CONNECT_AND_CREATE
