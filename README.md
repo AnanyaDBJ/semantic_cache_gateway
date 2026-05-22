@@ -111,78 +111,49 @@ Caching is **skipped** when:
 ## Architecture
 
 ```mermaid
-flowchart TB
-    %% Client
-    Client["🖥️ Client<br/><i>OpenAI-compatible SDK</i>"]
+flowchart TD
+    %% Top: Client
+    Client["User Application (Client)"]
 
-    %% Databricks App boundary
-    subgraph App["<b>Databricks App (FastAPI)</b>"]
-        direction TB
-        Gateway["Gateway Proxy<br/><code>/v1/chat/completions</code>"]
-        
-        subgraph Cache["Semantic Cache Service"]
-            direction TB
-            Tier1["<b>Tier 1:</b> SHA-256 Exact Match<br/><i>~5ms lookup</i>"]
-            Tier2["<b>Tier 2:</b> pgvector HNSW Search<br/><i>cosine similarity ≥ threshold</i>"]
-        end
+    %% API Gateway
+    Gateway["API Gateway Proxy"]
 
-        Store["Store Response + Embedding<br/><i>(fire-and-forget)</i>"]
-        Eviction["Background Eviction Loop<br/><i>TTL cleanup every 10 min</i>"]
+    %% Semantic Cache subgraph
+    subgraph SemanticCache["Semantic Cache"]
+        Tier1["Cache Tier 1: Exact Match\n(Hash-based)"]
+        Tier2["Cache Tier 2: Similarity Match\n(Vector-based)"]
     end
 
-    %% External services
-    subgraph Databricks["<b>Databricks Platform</b>"]
-        direction TB
-        Embedding["Embedding Endpoint<br/><code>databricks-gte-large-en</code><br/><i>1024-dim vectors</i>"]
-        LLM["LLM Serving Endpoint<br/><code>databricks-claude-opus-4-6</code>"]
+    %% Serving Endpoints
+    Embedding["Embedding Model\ndatabricks-gte-large-en\n(1024-dim)"]
+    LLM["LLM Serving Endpoint\ndatabricks-claude-opus-4-6"]
+
+    %% Persistent Storage subgraph
+    subgraph Storage["Persistent Storage"]
+        CacheData["Lakebase\nPersistent Cache Data"]
+        Logs["Lakebase\nAccess Logs"]
     end
 
-    subgraph Lakebase["<b>Lakebase (Managed PostgreSQL + pgvector)</b>"]
-        direction LR
-        Entries["<code>cache_entries</code><br/>prompt_hash, embedding,<br/>response, TTL, owner_id"]
-        Events["<code>cache_events</code><br/>hit/miss/store metrics,<br/>latency, tokens saved"]
-        HNSW["HNSW Index<br/><i>m=16, ef_construction=200</i><br/><i>vector_cosine_ops</i>"]
-    end
-
-    %% Flow
-    Client -->|"POST /v1/chat/completions<br/>+ X-Cache-Owner-Id"| Gateway
-    Gateway --> Tier1
+    %% Main flow
+    Client --> Gateway
+    Gateway -->|"Lookup"| Tier1
     Tier1 -->|"MISS"| Tier2
-    Tier1 -->|"HIT ⚡"| Client
-    Tier2 -->|"HIT ⚡"| Client
-    Tier2 -->|"MISS"| LLM
-    Gateway -->|"Generate embedding"| Embedding
-    Embedding -->|"vector(1024)"| Tier2
-    LLM -->|"LLM response"| Store
-    Store -->|"Cache for next time"| Entries
-    Store -->|"Log event"| Events
-    Tier1 -.->|"hash lookup"| Entries
-    Tier2 -.->|"similarity search"| HNSW
-    HNSW -.-> Entries
-    Eviction -.->|"DELETE expired"| Entries
-    Store -->|"X-Cache-Status: miss"| Client
+    Tier1 -->|"HIT"| Gateway
+    Tier2 -->|"HIT"| Gateway
+    Gateway -->|"HIT"| Client
 
-    %% Styling
-    classDef hit fill:#d4edda,stroke:#28a745,color:#000
-    classDef miss fill:#fff3cd,stroke:#ffc107,color:#000
-    classDef service fill:#e3f2fd,stroke:#1976d2,color:#000
-    classDef db fill:#f3e5f5,stroke:#7b1fa2,color:#000
+    %% Embedding flow
+    Embedding -->|"vectors"| Tier2
 
-    class Tier1,Tier2 hit
-    class LLM,Embedding service
-    class Entries,Events,HNSW db
+    %% Miss flow to LLM
+    Tier2 -->|"MISS"| Embedding
+    Embedding -->|"MISS"| LLM
+    LLM --> Gateway
+
+    %% Persistent storage (green)
+    SemanticCache -.->|"persist"| CacheData
+    LLM -.->|"log"| Logs
 ```
-
-### Request Flow Summary
-
-| Step | Action | Latency |
-|------|--------|---------|
-| 1 | Client sends chat completion request | — |
-| 2 | Normalize context → SHA-256 hash | <1ms |
-| 3 | **Tier 1:** Exact hash lookup in PostgreSQL | ~5ms |
-| 4 | **Tier 2:** Generate embedding → HNSW cosine search | ~50-100ms |
-| 5 | **Miss:** Forward to LLM, cache response | ~1-30s |
-| 6 | Return response with `X-Cache-Status` header | — |
 
 ## Configuration
 
