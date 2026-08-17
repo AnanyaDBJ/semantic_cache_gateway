@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     pgport: int = 5432
     lakebase_instance_name: str = "my-semantic-cache"
     lakebase_endpoint: str = "projects/my-semantic-cache/branches/production/endpoints/primary"
-    lakebase_host: str = "ep-xxxxx.database.us-east-2.cloud.databricks.com"
+    lakebase_host: str = "ep-xxxxx.databricks.com"
     db_pool_size: int = 5
     db_max_overflow: int = 10
     token_refresh_interval: int = 3000  # 50 min in seconds
